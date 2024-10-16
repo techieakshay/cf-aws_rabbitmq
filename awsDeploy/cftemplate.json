@@ -1,0 +1,275 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "AWS CloudFormation template to deploy an Amazon MQ RabbitMQ broker.",
+    "Parameters": {
+        "VpcId": {
+            "Type": "AWS::EC2::VPC::Id",
+            "Description": "The VPC ID where the ECS Cluster and ALB are deployed.",
+            "Default": "vpc-026a3605217f29788"
+        },
+        "VpcSubnetIds": {
+            "Type": "String",
+            "Description": "The Subnet IDs where the ECS tasks and Load Balancer will be placed.",
+            "Default": "subnet-063f5ebf040c9ac55|subnet-00b8ac669e7b8bc25"
+        },
+        "BrokerName": {
+            "Description": "Name of the RabbitMQ broker",
+            "Type": "String",
+            "Default": "AppRabbitMQ",
+            "MinLength": "1",
+            "MaxLength": "50",
+            "AllowedPattern": "^[a-zA-Z][a-zA-Z0-9-]+$",
+            "ConstraintDescription": "must begin with a letter and contain only alphanumeric characters or hyphens."
+        },
+        "EngineVersion": {
+            "Description": "The version of RabbitMQ engine to use",
+            "Type": "String",
+            "Default": "3.12.13",
+            "AllowedValues": [
+                "3.13",
+                "3.12.13",
+                "3.11.28",
+                "3.11.20"
+            ],
+            "ConstraintDescription": "must be a valid RabbitMQ engine version."
+        },
+        "HostInstanceType": {
+            "Description": "The instance type of the broker",
+            "Type": "String",
+            "Default": "mq.t3.micro",
+            "AllowedValues": [
+                "mq.t3.micro",
+                "mq.t3.small",
+                "mq.m5.large",
+                "mq.m5.xlarge",
+                "mq.m5.2xlarge"
+            ],
+            "ConstraintDescription": "must be a valid MQ broker instance type."
+        },
+        "Username": {
+            "Description": "The username for the broker",
+            "Type": "String",
+            "Default": "mqrabbituser",
+            "MinLength": "1",
+            "MaxLength": "20",
+            "AllowedPattern": "^[a-zA-Z0-9_-]+$",
+            "ConstraintDescription": "must contain only alphanumeric characters, underscores, or hyphens."
+        },
+        "Password": {
+            "Description": "The password for the broker user",
+            "Type": "String",
+            "NoEcho": true,
+            "Default": "changeitsoon@123",
+            "MinLength": "8",
+            "MaxLength": "128",
+            "AllowedPattern": "^[a-zA-Z0-9@#$%^&+=]+$",
+            "ConstraintDescription": "must contain only alphanumeric and the following characters: @#$%^&+="
+        },
+        "SecurityGroupIngressPorts": {
+            "Description": "Comma-separated list of ports to allow inbound traffic",
+            "Type": "String",
+            "Default": "5672,15672",
+            "AllowedPattern": "^([0-9]{1,5})(,[0-9]{1,5})*$",
+            "ConstraintDescription": "must be a comma-separated list of valid port numbers."
+        },
+        "PubliclyAccessible": {
+            "Description": "Whether the broker is publicly accessible",
+            "Type": "String",
+            "AllowedValues": [
+                "true",
+                "false"
+            ],
+            "Default": "false",
+            "ConstraintDescription": "must be either true or false."
+        }
+    },
+    "Resources": {
+        "AppRabbitMQSecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "Security group for RabbitMQ broker",
+                "VpcId": {
+                    "Ref": "VpcId"
+                },
+                "SecurityGroupIngress": {
+                    "Fn::If": [
+                        "HasIngressPorts",
+                        [
+                            {
+                                "IpProtocol" : "tcp",
+                                "FromPort": {
+                                    "Fn::Select": [
+                                      "0",
+                                      { "Fn::Split": [ ",", { "Ref": "SecurityGroupIngressPorts" } ] }
+                                    ]
+                                },
+                                "ToPort": {
+                                    "Fn::Select": [
+                                      "0",
+                                      { "Fn::Split": [ ",", { "Ref": "SecurityGroupIngressPorts" } ] }
+                                    ]
+                                },
+                                "CidrIp": "0.0.0.0/8"
+                            },
+                            {
+                                "IpProtocol" : "tcp",
+                                "FromPort": {
+                                    "Fn::Select": [
+                                      "1",
+                                      { "Fn::Split": [ ",", { "Ref": "SecurityGroupIngressPorts" } ] }
+                                    ]
+                                },
+                                "ToPort": {
+                                    "Fn::Select": [
+                                      "1",
+                                      { "Fn::Split": [ ",", { "Ref": "SecurityGroupIngressPorts" } ] }
+                                    ]
+                                },
+                                "CidrIp": "0.0.0.0/8"
+                            }
+                        ],
+                        []
+                    ]
+                },
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Join": [
+                                "-",
+                                [
+                                    {
+                                        "Ref": "BrokerName"
+                                    },
+                                    "SecurityGroup"
+                                ]
+                            ]
+                        }
+                    }
+                ]
+            },
+            "Condition": "HasIngressPorts"
+        },
+        "AppRabbitMQBroker": {
+            "Type": "AWS::AmazonMQ::Broker",
+            "Properties": {
+                "BrokerName": {
+                    "Ref": "BrokerName"
+                },
+                "EngineType": "RABBITMQ",
+                "EngineVersion": {
+                    "Ref": "EngineVersion"
+                },
+                "HostInstanceType": {
+                    "Ref": "HostInstanceType"
+                },
+                "DeploymentMode": "SINGLE_INSTANCE",
+                "Users": [
+                    {
+                        "Username": {
+                            "Ref": "Username"
+                        },
+                        "Password": {
+                            "Ref": "Password"
+                        },
+                        "ConsoleAccess": true
+                    }
+                ],
+                "PubliclyAccessible": {
+                    "Fn::If": [
+                        "IsPubliclyAccessible",
+                        "true",
+                        "false"
+                    ]
+                },
+                "SecurityGroups": [
+                    {
+                        "Ref": "AppRabbitMQSecurityGroup"
+                    }
+                ],
+                "SubnetIds":  [ {
+                    "Fn::Select": [
+                      "0",
+                      { "Fn::Split": [ "|", { "Ref": "VpcSubnetIds" } ] }
+                    ]
+                }],
+                "AutoMinorVersionUpgrade": true,
+                "MaintenanceWindowStartTime": { 
+                    "DayOfWeek": "Sunday",
+                    "TimeOfDay": "00:15",
+                    "TimeZone": "America/New_York"
+                },
+                "EncryptionOptions": {
+                    "UseAwsOwnedKey": true
+                },
+                "Logs": {
+                    "General": true
+                }
+            }
+        }
+    },
+    "Conditions": {
+        "HasIngressPorts": {
+            "Fn::Not": [
+                {
+                    "Fn::Equals": [
+                        {
+                            "Ref": "SecurityGroupIngressPorts"
+                        },
+                        ""
+                    ]
+                }
+            ]
+        },
+        "IsPubliclyAccessible": {
+            "Fn::Equals": [
+                {
+                    "Ref": "PubliclyAccessible"
+                },
+                "true"
+            ]
+        }
+    },
+    "Outputs": {
+        "BrokerEndpoints": {
+            "Description": "Endpoints of the RabbitMQ broker",
+            "Value": {
+                "Fn::Join": [
+                    ", ",
+                    {
+                        "Fn::GetAtt": [
+                            "AppRabbitMQBroker",
+                            "AmqpEndpoints"
+                        ]
+                    }
+                ]
+            }
+        },
+        "OpenWireEndpoints": {
+            "Description": "Endpoints of the RabbitMQ broker",
+            "Value": {
+                "Fn::Join": [
+                    ", ",
+                    {
+                        "Fn::GetAtt": [
+                            "AppRabbitMQBroker",
+                            "OpenWireEndpoints"
+                        ]
+                    }
+                ]
+            }
+        },
+        "BrokerId": {
+            "Description": "Broker ID",
+            "Value": {
+                "Ref": "AppRabbitMQBroker"
+            }
+        },
+        "SecurityGroupId": {
+            "Description": "Security Group ID for RabbitMQ broker",
+            "Value": {
+                "Ref": "AppRabbitMQSecurityGroup"
+            }
+        }
+    }
+}
